@@ -1,0 +1,6 @@
+torch>=2.0
+transformers==4.46.0
+datasets>=2.14
+tqdm>=4.65
+numpy>=1.23
+httpx[socks]==0.27.0
