@@ -23,11 +23,13 @@ project/
 
 ### 2.1 依赖库
 - Python ≥ 3.8
-- PyTorch ≥ 2.0
-- Transformers ≥ 4.40
-- Datasets
-- tqdm
-- matplotlib（仅绘图需要）
+- torch>=2.0
+- transformers==4.46.0
+- datasets>=2.14
+- tqdm>=4.65
+- numpy>=1.23
+- httpx[socks]==0.27.0
+
 
 安装示例：
 ```bash
@@ -46,7 +48,7 @@ python main.py
 程序将自动完成以下操作：
 1. 加载 Pythia-70M 模型
 2. 对 PG19 文本进行带 KV Cache 的 PPL 测试
-3. 分别在 PG19 长提示和 WikiText 短提示上进行生成速度测试，并输出指标和 TPOT 曲线图
+3. 分别在 PG19 长提示和 WikiText 短提示上进行生成速度测试，并输出指标
 
 ---
 
@@ -143,9 +145,7 @@ proj_dim = 64              # 降维维度（RKV 中可选）
   - `Avg TPOT`：后续 token 的平均生成时间。
   - `Throughput`：每秒生成的 token 数。
 
-同时生成两张 TPOT 曲线图：
-- `tpot_pg19.png`：长文本生成时不同方法的 TPOT 变化趋势。
-- `tpot_wikitext.png`：短文本生成时的对比。
+
 
 ---
 
@@ -158,5 +158,3 @@ proj_dim = 64              # 降维维度（RKV 中可选）
 - `pg19_sample.txt` 文件需用户自行从 PG19 数据集中抽取一段长文本（不少于 5000 字符）放入根目录，否则程序无法读取 PG19 数据。
 
 ---
-
-以上即本项目的完整代码说明，可供组员快速了解架构、运行实验及自定义修改。
