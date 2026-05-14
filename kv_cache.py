@@ -48,43 +48,8 @@ def should_optimize_kv_cache(
         seq_len - last_compress_len > min_seq_growth
     )
 
-def truncate_kv_cache(past_key_values, max_length=256):
-    new_past = []
-    for k, v in past_key_values:
-        if k.size(2) <= max_length:
-            new_past.append((k, v))
-        else:
-            new_past.append((
-                k[:, :, -max_length:, :],
-                v[:, :, -max_length:, :]
-            ))
-    return tuple(new_past)
 
 
-def streaming_kv_cache(past_key_values, sink_size=4, window_size=256):
-    new_past = []
-    max_len = sink_size + window_size
-
-    for k, v in past_key_values:
-        seq_len = k.size(2)
-
-        if seq_len <= max_len:
-            new_past.append((k, v))
-            continue
-
-        k_new = torch.cat([
-            k[:, :, :sink_size, :],
-            k[:, :, -window_size:, :]
-        ], dim=2)
-
-        v_new = torch.cat([
-            v[:, :, :sink_size, :],
-            v[:, :, -window_size:, :]
-        ], dim=2)
-
-        new_past.append((k_new, v_new))
-
-    return tuple(new_past)
 
 def rkv_dedup_kv_cache(
     past_key_values,
@@ -166,129 +131,8 @@ def rkv_dedup_kv_cache(
     return tuple(new_past)
 
 
-def snapkv_cache(past_key_values, keep_ratio=0.5, max_total_len=256):
-    new_past = []
 
-    for k, v in past_key_values:
-        B, H, T, D = k.shape
 
-        if T <= max_total_len:
-            new_past.append((k, v))
-            continue
-
-        # ===== 固定 window =====
-        window = min(256, max_total_len)
-        k_window = k[:, :, -window:, :]
-        v_window = v[:, :, -window:, :]
-
-        k_prefix = k[:, :, :-window, :]
-        v_prefix = v[:, :, :-window, :]
-
-        # ===== prefix 压缩 =====
-        prefix_budget = max_total_len - window
-
-        if prefix_budget > 0 and k_prefix.size(2) > 0:
-            score = k_prefix.norm(dim=-1).mean(dim=1)
-
-            k_keep = min(prefix_budget, k_prefix.size(2))
-
-            idx = torch.topk(score, k_keep, dim=-1).indices[0]
-            idx = torch.sort(idx).values
-
-            k_prefix = k_prefix.index_select(2, idx)
-            v_prefix = v_prefix.index_select(2, idx)
-        else:
-            k_prefix = k_prefix[:, :, :0, :]
-            v_prefix = v_prefix[:, :, :0, :]
-
-        # ❗关键：window 不压缩
-        k_new = torch.cat([k_prefix, k_window], dim=2)
-        v_new = torch.cat([v_prefix, v_window], dim=2)
-
-        new_past.append((k_new, v_new))
-
-    return tuple(new_past)
-
-def snapkv_rkv_cache(
-    past_key_values,
-    keep_ratio=0.5,
-    threshold=0.95,
-    proj_dim=64,
-    max_total_len=512
-):
-
-    new_past = []
-
-    for k, v in past_key_values:
-        B, H, T, D = k.shape
-
-        if T <= max_total_len:
-            new_past.append((k, v))
-            continue
-
-        # ===== window 固定 =====
-        window = min(256, max_total_len)
-
-        k_window = k[:, :, -window:, :]
-        v_window = v[:, :, -window:, :]
-
-        k_prefix = k[:, :, :-window, :]
-        v_prefix = v[:, :, :-window, :]
-
-        # ===== prefix 预算 =====
-        prefix_budget = max_total_len - window
-
-        if prefix_budget > 0 and k_prefix.size(2) > 0:
-
-            # ===== Step1: top-k =====
-            score = k_prefix.norm(dim=-1).mean(dim=1)
-            k_keep = min(prefix_budget * 2, k_prefix.size(2))  # ⭐多选一点给RKV用
-
-            idx = torch.topk(score, k_keep, dim=-1).indices[0]
-            idx = torch.sort(idx).values
-
-            k_prefix = k_prefix.index_select(2, idx)
-            v_prefix = v_prefix.index_select(2, idx)
-
-            # ===== Step2: RKV去冗余（只在prefix）=====
-            if k_prefix.size(2) >= 2:
-                k_proj = k_prefix[..., :proj_dim] if proj_dim < D else k_prefix
-                k_norm = F.normalize(k_proj, dim=-1)
-
-                sim = F.cosine_similarity(
-                    k_norm[:, :, :-1, :],
-                    k_norm[:, :, 1:, :],
-                    dim=-1
-                )
-
-                sim_mean = sim.mean(dim=1)
-
-                keep_mask = sim_mean <= threshold
-                keep_mask = torch.cat([
-                    keep_mask,
-                    torch.ones(B, 1, device=k.device, dtype=torch.bool)
-                ], dim=-1)
-
-                idx2 = torch.nonzero(keep_mask[0], as_tuple=False).squeeze(-1)
-
-                k_prefix = k_prefix.index_select(2, idx2)
-                v_prefix = v_prefix.index_select(2, idx2)
-
-            # ===== Step3: 控制prefix长度 =====
-            if k_prefix.size(2) > prefix_budget:
-                k_prefix = k_prefix[:, :, -prefix_budget:, :]
-                v_prefix = v_prefix[:, :, -prefix_budget:, :]
-        else:
-            k_prefix = k_prefix[:, :, :0, :]
-            v_prefix = v_prefix[:, :, :0, :]
-
-        # ===== merge（window不动）=====
-        k_new = torch.cat([k_prefix, k_window], dim=2)
-        v_new = torch.cat([v_prefix, v_window], dim=2)
-
-        new_past.append((k_new, v_new))
-
-    return tuple(new_past)
 
 def snapkv_plus_plus_cache(
     past_key_values,
